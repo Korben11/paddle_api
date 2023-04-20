@@ -1,9 +1,11 @@
 """Main module."""
 import typing
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from enum import Enum
 
 import requests
+
+import paddle_api.type_defs as td
 
 
 class Path(Enum):
@@ -23,23 +25,11 @@ class BadRequest(requests.HTTPError):
         super().__init__(error["detail"], *args, **kwargs)
 
 
-@dataclass
-class Product:  # noqa: D101
-    name: str
-    tax_category: typing.Literal[
-        "standard",
-        "saas",
-        "ebooks",
-        "digital-goods",
-        "website-hosting",
-        "human-services",
-        "implementation-services",
-        "training-services",
-        "professional-services",
-        "software-programming-services",
-    ]
-    description: typing.Optional[str] = None
-    image_url: typing.Optional[str] = None
+def item_paginator(page_paginator: typing.Generator[td.Page, None, None]) -> typing.Generator[dict, None, None]:
+    """Directly yields each data item from each page."""
+    for page in page_paginator:
+        for item in page.data:
+            yield item
 
 
 class Paddle:
@@ -63,13 +53,24 @@ class Paddle:
             return url
         return f"{url}/{pk}"
 
-    def _get(self, path: Path, pk: typing.Optional[str] = None):
+    def _get(self, path: Path, pk: typing.Optional[str] = None, query_params: typing.Optional[dict] = None) -> td.Page:
         url = self._get_url(path, pk)
         response = requests.get(
             url=url,
             headers=self.headers,
+            params=query_params,
         )
         return response.json()
+
+    def _paginator(self, path: Path, per_page: typing.Optional[int] = None) -> typing.Generator[td.Page, None, None]:
+        response = td.Page.from_dict(self._get(path, query_params={"per_page": per_page}))
+        yield response
+        while response.meta.pagination.has_more:
+            after = response.data[-1]["id"]
+            response = td.Page.from_dict(
+                self._get(path, query_params={"per_page": response.meta.pagination.per_page, "after": after})
+            )
+            yield response
 
     def _create_or_update(self, path: Path, data, pk: typing.Optional[str] = None) -> dict:
         request_f = requests.patch if pk else requests.post
@@ -87,14 +88,18 @@ class Paddle:
         """Get webhook event types."""
         return self._get(Path.EVENT_TYPES)
 
-    def products(self, pk: typing.Optional[str] = None):
-        """Get products."""
+    def product(self, pk: str):
+        """Get product."""
         return self._get(Path.PRODUCTS, pk)
 
-    def product_create(self, product: Product):
-        """Create product."""
-        return self._create_or_update(Path.PRODUCTS, data=product)
+    def products(self, per_page: typing.Optional[int] = None) -> typing.Generator[td.Page, None, None]:
+        """Products paginator."""
+        return self._paginator(Path.PRODUCTS, per_page=per_page)
 
-    def product_update(self, product: Product, pk: str):
+    def product_create(self, product: td.ProductCreate) -> td.Product:
+        """Create product."""
+        return td.Product.from_dict(self._create_or_update(Path.PRODUCTS, data=product)["data"])
+
+    def product_update(self, product: td.ProductCreate, pk: str) -> td.Product:
         """Update (patch) product."""
-        return self._create_or_update(Path.PRODUCTS, data=product, pk=pk)
+        return td.Product.from_dict(self._create_or_update(Path.PRODUCTS, data=product, pk=pk)["data"])
