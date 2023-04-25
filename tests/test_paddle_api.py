@@ -1,22 +1,39 @@
 #!/usr/bin/env python
 """Tests for `paddle_api` package."""
-
 from dataclasses import dataclass
 
 import pytest
-from dataclasses_json import dataclass_json
 
 from paddle_api import type_defs as td
-from paddle_api.paddle_api import Paddle, Path
+from paddle_api.paddle_api import Paddle, item_paginator
 
 FAKE_API_KEY = "fake_123"
 
 
 @pytest.fixture
-def page():
+def mock_crudp_get(mocker):
+    yield mocker.patch("paddle_api.paddle_api.CRUDP._get")
+
+
+@pytest.fixture
+def make_product():
+    def make(pk: str = "pk_1", name: str = "Stefan"):
+        return {
+            "id": pk,
+            "name": name,
+            "status": "active",
+            "tax_category": "saas",
+            "created_at": "2023-04-18T16:21:30.366Z",
+        }
+
+    return make
+
+
+@pytest.fixture
+def page(make_product):
     return td.Page.from_dict(
         {
-            "data": [{"id": "pk_1"}, {"id": "pk_2"}, {"id": "pk_3"}],
+            "data": [make_product(pk=f"pk_{i+1}") for i in range(3)],
             "meta": {
                 "request_id": "req_123",
                 "pagination": {"next": None, "has_more": False, "per_page": 5, "estimated_total": 5},
@@ -52,8 +69,8 @@ def test_authorization_header():
 @pytest.mark.parametrize(
     "pk,expected",
     (
-        (None, "/event-types"),
-        ("123", "/event-types/123"),
+        (None, "/products"),
+        ("123", "/products/123"),
     ),
 )
 def test__get(pk, expected, mocker):
@@ -62,48 +79,81 @@ def test__get(pk, expected, mocker):
     client = Paddle(FAKE_API_KEY)
 
     # act
-    client._get(Path.EVENT_TYPES, pk)
+    client.product._get(pk)
 
     # assert
     mock_get.assert_called_once()
     assert expected in mock_get.call_args_list[0].kwargs["url"]
 
 
-def test__paginate_single_page(page: td.Page, mocker):
+def test_retrieve_product(make_product, mocker):
     # arrange
-    mock_get = mocker.patch("paddle_api.Paddle._get", return_value=page.to_dict())
+    response = mocker.MagicMock()
+    response.json.return_value = {"data": make_product(pk="prod_1"), "reqeust_id": "req_123"}
+    mock_get = mocker.patch("requests.get", return_value=response)
     client = Paddle(FAKE_API_KEY)
 
     # act
-    page = next(client._paginator(path=Path.PRODUCTS))
+    product = client.product.retrieve(pk="prod_1")
 
     # assert
     mock_get.assert_called_once()
-    isinstance(page, td.Page)
+    assert isinstance(product, td.Product)
+    assert product.id == "prod_1"
 
 
-def test__paginate(page, mocker):
+def test__paginate_single_page(page, mock_crudp_get):
     # arrange
-    second_page = page.to_dict()
-    page.meta.pagination.has_more = True
-    second_page["data"] = [{"id": "pk_4"}, {"id": "pk_5"}, {"id": "pk_6"}]
-    mock_get = mocker.patch("paddle_api.Paddle._get", side_effect=iter([page.to_dict(), second_page]))
+    mock_crudp_get.return_value = page.to_dict()
     client = Paddle(FAKE_API_KEY)
 
     # act
-    pages = list(client._paginator(path=Path.PRODUCTS))
+    page = next(client.product.paginator())
 
     # assert
-    assert mock_get.call_count == 2
-    assert mock_get.mock_calls[1] == mocker.call(Path.PRODUCTS, query_params={"per_page": 5, "after": "pk_3"})
+    mock_crudp_get.assert_called_once()
+    isinstance(page, td.Page)
+
+
+def test__paginate(page, make_product, mock_crudp_get, mocker):
+    # arrange
+    second_page = page.to_dict()
+    page.meta.pagination.has_more = True
+    second_page["data"] = [make_product(pk=f"pk_{i}") for i in range(4, 7)]
+    mock_crudp_get.side_effect = iter([page.to_dict(), second_page])
+    client = Paddle(FAKE_API_KEY)
+
+    # act
+    pages = list(client.product.paginator())
+
+    # assert
+    assert mock_crudp_get.call_count == 2
+    assert mock_crudp_get.mock_calls[1] == mocker.call("/products", query_params={"per_page": 5, "after": "pk_3"})
     for page in pages:
         isinstance(page, td.Page)
+
+
+def test__items_from_pages(page, make_product, mock_crudp_get):
+    # arrange
+    second_page = page.to_dict()
+    page.meta.pagination.has_more = True
+    second_page["data"] = [make_product(pk=f"pk_{i}") for i in range(4, 7)]
+    mock_crudp_get.side_effect = iter([page.to_dict(), second_page])
+    client = Paddle(FAKE_API_KEY)
+
+    # act
+    items_g = item_paginator(client.product.paginator())
+    items = list(items_g)
+
+    # assert
+    assert len(items) == 6
 
 
 @pytest.mark.skip
 def test_page_generics():
     # arrange
-    @dataclass_json
+
+    # @dataclass_json
     @dataclass
     class Fake:
         name: str
