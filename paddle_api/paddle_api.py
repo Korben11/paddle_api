@@ -3,14 +3,14 @@ import typing
 from dataclasses import asdict
 
 import requests
-from dataclass_wizard import JSONWizard
+from pydantic import BaseModel
 
 import paddle_api.type_defs as td
 
-T = typing.TypeVar("T")
-T_CREATE = typing.TypeVar("T_CREATE", bound=JSONWizard)
-T_UPDATE = typing.TypeVar("T_UPDATE", bound=JSONWizard)
-T_INSTANCE = typing.TypeVar("T_INSTANCE", bound=JSONWizard)
+T = typing.TypeVar("T", bound=BaseModel)
+T_CREATE = typing.TypeVar("T_CREATE", bound=BaseModel)
+T_UPDATE = typing.TypeVar("T_UPDATE", bound=BaseModel)
+T_INSTANCE = typing.TypeVar("T_INSTANCE", bound=BaseModel)
 
 
 class CRUDP(typing.Generic[T_CREATE, T_UPDATE, T_INSTANCE]):
@@ -52,28 +52,28 @@ class CRUDP(typing.Generic[T_CREATE, T_UPDATE, T_INSTANCE]):
 
     def create(self, item: T_CREATE) -> T_INSTANCE:
         response = self._create_or_update(item)
-        return self.t.from_dict(response["data"])
+        return self.t.parse_obj(response["data"])
 
     def update(self, item: T_UPDATE) -> T_INSTANCE:
-        response = self._create_or_update(item, pk=item.id)
-        return self.t.from_dict(response["data"])
+        response = self._create_or_update(item, pk=item.id)  # type: ignore[attr-defined]  # id
+        return self.t.parse_obj(response["data"])
 
     def retrieve(self, pk: str) -> T_INSTANCE:
         response = self._get(pk=pk)
-        return self.t.from_dict(response["data"])
+        return self.t.parse_obj(response["data"])
 
     def paginator(self, per_page: typing.Optional[int] = None) -> typing.Generator[td.Page[T_INSTANCE], None, None]:
-        response = td.Page.from_dict(self._get(self.path, query_params={"per_page": per_page}))
-        # generics seems to not work yet with from_dict in libs: dataclass-wizard, dataclasses-json
-        response.data = self.t.from_list(response.data)
+        response = td.Page[self.t].parse_obj(  # type: ignore[name-defined]  # self.t
+            self._get(self.path, query_params={"per_page": per_page})
+        )
         yield response
+        if not response.meta.pagination:
+            return None
         while response.meta.pagination.has_more:
             after = response.data[-1].id
-            response = td.Page.from_dict(
+            response = td.Page[self.t].parse_obj(  # type: ignore[name-defined]  # self.t
                 self._get(self.path, query_params={"per_page": response.meta.pagination.per_page, "after": after})
             )
-            # generics seems to not work yet with from_dict in libs: dataclass-wizard, dataclasses-json
-            response.data = self.t.from_list(response.data)
             yield response
 
     def delete(self, pk: str):

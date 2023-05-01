@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 """Tests for `paddle_api` package."""
-from dataclasses import dataclass
-
 import pytest
+from pydantic import BaseModel
 
 from paddle_api import type_defs as td
 from paddle_api.paddle_api import Paddle, item_paginator
@@ -31,7 +30,7 @@ def make_product():
 
 @pytest.fixture
 def page(make_product):
-    return td.Page.from_dict(
+    return td.Page[td.Product].parse_obj(
         {
             "data": [make_product(pk=f"pk_{i+1}") for i in range(3)],
             "meta": {
@@ -104,7 +103,7 @@ def test_retrieve_product(make_product, mocker):
 
 def test__paginate_single_page(page, mock_crudp_get):
     # arrange
-    mock_crudp_get.return_value = page.to_dict()
+    mock_crudp_get.return_value = page.dict()
     client = Paddle(FAKE_API_KEY)
 
     # act
@@ -113,14 +112,16 @@ def test__paginate_single_page(page, mock_crudp_get):
     # assert
     mock_crudp_get.assert_called_once()
     isinstance(page, td.Page)
+    isinstance(page.data[0], td.Product)
+    assert page.data[0].id == "pk_1"
 
 
 def test__paginate(page, make_product, mock_crudp_get, mocker):
     # arrange
-    second_page = page.to_dict()
+    second_page = page.dict()
     page.meta.pagination.has_more = True
     second_page["data"] = [make_product(pk=f"pk_{i}") for i in range(4, 7)]
-    mock_crudp_get.side_effect = iter([page.to_dict(), second_page])
+    mock_crudp_get.side_effect = iter([page.dict(), second_page])
     client = Paddle(FAKE_API_KEY)
 
     # act
@@ -135,10 +136,10 @@ def test__paginate(page, make_product, mock_crudp_get, mocker):
 
 def test__items_from_pages(page, make_product, mock_crudp_get):
     # arrange
-    second_page = page.to_dict()
+    second_page = page.dict()
     page.meta.pagination.has_more = True
     second_page["data"] = [make_product(pk=f"pk_{i}") for i in range(4, 7)]
-    mock_crudp_get.side_effect = iter([page.to_dict(), second_page])
+    mock_crudp_get.side_effect = iter([page.dict(), second_page])
     client = Paddle(FAKE_API_KEY)
 
     # act
@@ -149,17 +150,13 @@ def test__items_from_pages(page, make_product, mock_crudp_get):
     assert len(items) == 6
 
 
-@pytest.mark.skip
 def test_page_generics():
     # arrange
-
-    # @dataclass_json
-    @dataclass
-    class Fake:
+    class Fake(BaseModel):
         name: str
 
     # act
-    page = td.Page[Fake].from_dict(
+    page = td.Page[Fake].parse_obj(
         {
             "data": [{"name": "Stefan"}],
             "meta": {
@@ -171,3 +168,4 @@ def test_page_generics():
 
     # assert
     assert isinstance(page.data[0], Fake)
+    assert page.data[0].name == "Stefan"

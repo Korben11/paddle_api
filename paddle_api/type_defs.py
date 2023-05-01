@@ -1,38 +1,28 @@
 """Type definitions."""
 import typing
-from dataclasses import dataclass, field
+
+from pydantic import BaseModel
+from pydantic.generics import GenericModel
 
 # TODO: try to replace dataclass_wizard with dacite https://github.com/konradhalas/dacite
 #  or use Pydantic?
-from dataclass_wizard import JSONWizard
 
-T = typing.TypeVar("T", bound=JSONWizard)
+T = typing.TypeVar("T", bound=BaseModel)
 
 
-@dataclass
-class Pagination:
+class Pagination(BaseModel):
     per_page: int
     has_more: bool
     estimated_total: int
     next: typing.Optional[str] = None
 
 
-@dataclass
-class ResponseMeta:
+class ResponseMeta(BaseModel):
     request_id: str
     pagination: typing.Optional[Pagination]
 
 
-@dataclass
-class Page(typing.Generic[T], JSONWizard):
-    # data: typing.List[dict]
-    # generics seems to not work yet with from_dict in libs: dataclass-wizard, dataclasses-json
-    data: typing.List[T]
-    meta: ResponseMeta
-
-
-@dataclass
-class _ProductBase(JSONWizard):
+class _ProductBase(BaseModel):
     name: str
     tax_category: typing.Literal[
         "standard",
@@ -46,46 +36,39 @@ class _ProductBase(JSONWizard):
         "professional-services",
         "software-programming-services",
     ]
-
-
-@dataclass
-class _ProductDefaultsBase:
     description: typing.Optional[str] = None
     image_url: typing.Optional[str] = None
 
 
-@dataclass
-class ProductCreate(_ProductDefaultsBase, _ProductBase):
+class Page(GenericModel, typing.Generic[T]):
+    # data: typing.List[dict]
+    # generics seems to not work yet with from_dict in libs: dataclass-wizard, dataclasses-json
+    data: typing.List[T]
+    meta: ResponseMeta
+
+
+class ProductCreate(_ProductBase):
     pass
 
 
-@dataclass
-class _Product(_ProductBase):
+class Product(_ProductBase):
     id: str
-    status: bool
+    status: typing.Literal["active", "archived"]
     # string<date-time>, Timestamp following the RFC 3339 standard
     created_at: str
 
 
-@dataclass
-class Product(_ProductDefaultsBase, _Product):
-    pass
-
-
-@classmethod
-class Quantity:
+class Quantity(BaseModel):
     minimum: int
     maximum: int
 
 
-@classmethod
-class BillingCycle:
+class BillingCycle(BaseModel):
     interval: str
     frequency: int
 
 
-@classmethod
-class Money:
+class Money(BaseModel):
     amount: str
     # ISO 4217 code of a currency
     currency_code: typing.Literal[
@@ -121,8 +104,7 @@ class Money:
     ]
 
 
-@classmethod
-class UnitPriceOverride:
+class UnitPriceOverride(BaseModel):
     amount: str
     # ISO 3166-1 alpha-2 representation of a country
     currency_code: typing.Literal[
@@ -375,41 +357,30 @@ class UnitPriceOverride:
     unit_price: Money
 
 
-@dataclass
-class _PriceDefaultBase:
+class _PriceBase(BaseModel):
     quantity: Quantity = None  # type: ignore  # issue when used with Optional
     billing_cycle: BillingCycle = None  # type: ignore
     # Cannot be used if billing_cycle is null
     # TODO: add some kind of validation for init?
     trial_period: typing.Any = None
-    tax_mode: typing.Literal[
-        "internal",
-        "external",
-        "account_setting",
-    ] = None  # type: ignore
-    unit_price_overrides: typing.List[typing.Any] = field(default_factory=list)
-    # unit_price_overrides: typing.List[UnitPriceOverride] = field(default_factory=list)  # type: ignore
-
-
-@dataclass
-class _PriceCreateBase(JSONWizard):
+    tax_mode: typing.Optional[
+        typing.Literal[
+            "internal",
+            "external",
+            "account_setting",
+        ]
+    ] = None
+    unit_price_overrides: typing.Optional[typing.List[UnitPriceOverride]] = None
     description: str
     product_id: str
     unit_price: Money
 
 
-@dataclass
-class _PriceBase(_PriceCreateBase):
+class PriceCreate(_PriceBase):
+    pass
+
+
+class Price(_PriceBase):
     id: str
     status: typing.Literal["active", "archived"]
     product: Product
-
-
-@dataclass
-class PriceCreate(_PriceDefaultBase, _PriceCreateBase):
-    pass
-
-
-@dataclass
-class Price(_PriceDefaultBase, _PriceBase):
-    pass
